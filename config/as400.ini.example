@@ -1,0 +1,5 @@
+[as400]
+host = AS400_HOST
+driver = DRIVER
+user = USERNAME
+pass = PASSWORD
