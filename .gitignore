@@ -60,3 +60,6 @@ dist/
 .env.*
 # Local credentials (DO NOT COMMIT)
 config/as400.ini
+
+
+core/mappings/*.py

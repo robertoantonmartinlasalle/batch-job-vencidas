@@ -1,30 +1,31 @@
-# Este módulo Logging nos permite registrar mensajes (INFO, ERROR, etc.)
-# en lugar de usar print(), que NO es apropiado para producción.
 import logging
+import sys
 
-# Importar la función que lee y valida la configuración AS400
+from tabulate import tabulate
+
 from core.config_loader import load_as400_config
-
-# Importar la función responsable de crear la conexión ODBC.
 from core.connection import create_as400_connection
 
-# Se define la ruta del fichero de log.
+from repositories.facturas_repository import fetch_facturas
+from services.facturas_service import process_facturas
+
+
+# ==================================================
+# CONFIGURACIÓN
+# ==================================================
 LOG_FILE = "logs/batch_job.log"
+FILTER_YEAR = 2026
+MAX_ROWS = 100
 
-"""
-    Configura el sistema de logging del proyecto.
-
-    Esta función debe llamarse UNA SOLA VEZ al inicio del programa.
-    A partir de aquí, cualquier módulo podrá usar logging.getLogger(...)
-    y escribir en el mismo sistema de logs.
-    """
 
 def setup_logging():
-    # Nivel mínimo de log que se va a registrar. (INFO, WARNING, ERROR y CRITICAL)
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        return
+
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", # Formato del mensaje
-        # Se definen dos "handlers": uno para fichero y otro para consola.
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[
             logging.FileHandler(LOG_FILE),
             logging.StreamHandler()
@@ -33,33 +34,60 @@ def setup_logging():
 
 
 def main():
-    """
-    Función principal del batch.
-
-    Actúa como orquestador:
-    - inicializa el logging
-    - carga la configuración
-    - establece la conexión AS400
-    - maneja errores a alto nivel
-    """
-    # A partir de este punto, logging funciona en todo el programa.
     setup_logging()
     logger = logging.getLogger(__name__)
-    # Muy importante para auditoría y trazabilidad.
     logger.info("Starting batch job")
+
+    preview_mode = "--preview" in sys.argv
+
+    connection = None
 
     try:
         config = load_as400_config()
-        logger.info("AS400 configuration loaded")
-        # Se abre la conexión
         connection = create_as400_connection(config)
-        logger.info("AS400 connection established successfully")
-        # Se cierra la conexión
-        connection.close()
-        logger.info("AS400 connection closed")
-    # en producción sin acceso a consola.
-    except Exception as exc:
-        logger.error(f"Batch job failed: {exc}", exc_info=True)
+        logger.info("AS400 connection established")
+
+        rows = fetch_facturas(connection, MAX_ROWS)
+        logger.info(f"Rows fetched: {len(rows)}")
+
+        facturas = process_facturas(rows, FILTER_YEAR)
+        logger.info(f"Facturas procesadas: {len(facturas)}")
+
+        if preview_mode and facturas:
+            print("\n=== FACTURAS ===\n")
+            print(tabulate(
+                [
+                    (
+                        f["anio"],
+                        f["factura"],
+                        f["cliente"],
+                        f["importe"],
+                        f["pagado"],
+                        f["pendiente"],
+                        f["vencida"],
+                        f["condiciones_pago"],
+                        f["fecha_factura"],
+                        f["fecha_vencimiento"],
+                    )
+                    for f in facturas
+                ],
+                headers=[
+                    "AÑO", "FACTURA", "CLIENTE",
+                    "IMPORTE", "PAGADO", "PENDIENTE",
+                    "VENCIDA", "COND. PAGO",
+                    "FECHA FACTURA", "VENCIMIENTO"
+                ],
+                tablefmt="grid"
+            ))
+            print("\n=================\n")
+
+    except Exception:
+        logger.error("Batch job failed", exc_info=True)
+
+    finally:
+        if connection:
+            connection.close()
+            logger.info("AS400 connection closed")
 
 
 if __name__ == "__main__":
